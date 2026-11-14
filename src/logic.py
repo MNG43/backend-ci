@@ -134,8 +134,11 @@ def service_out(service: models.Service) -> schemas.ServiceOut:
         is_open=open_now,
         ticket_distribution_open=is_ticket_distribution_open(service),
         no_show_timeout_seconds=service.no_show_timeout_seconds,
-        is_active=service.is_active,
     )
+
+
+def admin_service_out(service: models.Service) -> schemas.AdminServiceOut:
+    return schemas.AdminServiceOut(**service_out(service).model_dump(), is_active=service.is_active)
 
 
 def record_status_change(db: Session, ticket: models.Ticket, previous: Optional[str], new: str, actor_id: Optional[int] = None) -> None:

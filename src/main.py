@@ -174,11 +174,11 @@ def list_services(db: Session = Depends(get_db)):
     return [logic.service_out(s) for s in services]
 
 
-@app.get("/api/admin/services", response_model=list[schemas.ServiceOut])
+@app.get("/api/admin/services", response_model=list[schemas.AdminServiceOut])
 def list_all_services(db: Session = Depends(get_db), _admin: models.User = Depends(auth.require_admin)):
     """Liste tous les services pour leur écran de gestion, y compris les désactivés."""
     services = db.query(models.Service).order_by(models.Service.id).all()
-    return [logic.service_out(service) for service in services]
+    return [logic.admin_service_out(service) for service in services]
 
 
 @app.get("/api/services/{service_id}", response_model=schemas.ServiceOut)
