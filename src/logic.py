@@ -134,6 +134,7 @@ def service_out(service: models.Service) -> schemas.ServiceOut:
         is_open=open_now,
         ticket_distribution_open=is_ticket_distribution_open(service),
         no_show_timeout_seconds=service.no_show_timeout_seconds,
+        is_active=service.is_active,
     )
 
 

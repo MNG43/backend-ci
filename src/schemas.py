@@ -80,6 +80,7 @@ class ServiceOut(BaseModel):
     is_open: bool
     ticket_distribution_open: bool
     no_show_timeout_seconds: int
+    is_active: bool
 
 
 class CounterOut(BaseModel):
