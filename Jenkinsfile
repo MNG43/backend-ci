@@ -108,7 +108,7 @@ pipeline {
             steps {
                 sh '''
                 set -eu
-                docker run --rm -i hadolint/hadolint:v2.12.0-alpine --failure-threshold error - < Dockerfile
+                docker run --rm -i hadolint/hadolint:v2.12.0-alpine hadolint --failure-threshold error - < Dockerfile
                 '''
             }
         }
