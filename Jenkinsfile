@@ -16,6 +16,7 @@ pipeline {
 
     environment {
         LOCAL_IMAGE = 'samafile-backend:ci'
+        CI_IMAGE = 'samafile-backend-ci:build'
         TRIVY_IMAGE = 'aquasec/trivy:0.58.1'
     }
 
@@ -23,6 +24,7 @@ pipeline {
         stage('Préparation') {
             steps {
                 sh 'mkdir -p reports'
+                sh 'docker build -f Dockerfile.ci -t "$CI_IMAGE" .'
             }
         }
 
@@ -47,15 +49,21 @@ pipeline {
                     sleep 2
                 done
                 test "$ready" = 1
-                docker run --rm \
+                docker create --name "samafile-tests-${BUILD_NUMBER}" \
                     --network "samafile-ci-${BUILD_NUMBER}" \
-                    -v "$PWD":/app -w /app \
                     -e APP_ENV=test \
                     -e TEST_DATABASE_ALLOW_REMOTE=1 \
                     -e SECRET_KEY=ci-secret-key-not-for-production-use \
                     -e "TEST_DATABASE_URL=postgresql+psycopg://samafile:ci_only@samafile-pg-${BUILD_NUMBER}:5432/samafile_test" \
-                    python:3.12-slim \
-                    bash -lc 'pip install --no-cache-dir -r requirements.txt -r tests/requirements.txt && python -m pytest tests --junitxml=reports/pytest.xml'
+                    "$CI_IMAGE" \
+                    python -m pytest tests --junitxml=reports/pytest.xml
+                set +e
+                docker start -a "samafile-tests-${BUILD_NUMBER}"
+                test_code=$?
+                set -e
+                docker cp "samafile-tests-${BUILD_NUMBER}:/app/reports/pytest.xml" reports/pytest.xml || true
+                docker rm -f "samafile-tests-${BUILD_NUMBER}" >/dev/null
+                exit "$test_code"
                 '''
             }
         }
@@ -64,8 +72,16 @@ pipeline {
             steps {
                 sh '''
                 set -eu
-                docker run --rm -v "$PWD":/app -w /app python:3.12-slim \
-                    bash -lc 'pip install --no-cache-dir -r requirements-ci.txt && bandit -r src -ll -f json -o reports/bandit.json && bandit -r src -ll'
+                docker create --name "samafile-bandit-${BUILD_NUMBER}" "$CI_IMAGE" \
+                    bandit -r src -ll -f json -o reports/bandit.json
+                set +e
+                docker start -a "samafile-bandit-${BUILD_NUMBER}"
+                scan_code=$?
+                set -e
+                docker cp "samafile-bandit-${BUILD_NUMBER}:/app/reports/bandit.json" reports/bandit.json || true
+                docker rm -f "samafile-bandit-${BUILD_NUMBER}" >/dev/null
+                if [ "$scan_code" -ne 0 ]; then exit "$scan_code"; fi
+                docker run --rm "$CI_IMAGE" bandit -r src -ll
                 '''
             }
         }
@@ -74,8 +90,16 @@ pipeline {
             steps {
                 sh '''
                 set -eu
-                docker run --rm -v "$PWD":/app -w /app python:3.12-slim \
-                    bash -lc 'pip install --no-cache-dir -r requirements-ci.txt && pip-audit -r requirements.txt --progress-spinner off --format json --output reports/pip-audit.json && pip-audit -r requirements.txt --progress-spinner off'
+                docker create --name "samafile-audit-${BUILD_NUMBER}" "$CI_IMAGE" \
+                    pip-audit -r requirements.txt --progress-spinner off --format json --output reports/pip-audit.json
+                set +e
+                docker start -a "samafile-audit-${BUILD_NUMBER}"
+                audit_code=$?
+                set -e
+                docker cp "samafile-audit-${BUILD_NUMBER}:/app/reports/pip-audit.json" reports/pip-audit.json || true
+                docker rm -f "samafile-audit-${BUILD_NUMBER}" >/dev/null
+                if [ "$audit_code" -ne 0 ]; then exit "$audit_code"; fi
+                docker run --rm "$CI_IMAGE" pip-audit -r requirements.txt --progress-spinner off
                 '''
             }
         }
@@ -109,26 +133,22 @@ pipeline {
                 set +e
                 run_trivy \
                     -v /var/run/docker.sock:/var/run/docker.sock \
-                    -v "$PWD:/src" \
-                    -v "$PWD/reports:/reports" \
                     "$TRIVY_IMAGE" image \
                     --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 \
-                    --format table --output /reports/trivy-image.txt \
-                    "$LOCAL_IMAGE"
+                    --format table \
+                    "$LOCAL_IMAGE" > reports/trivy-image.txt 2>&1
                 image_code=$?
                 set -e
                 echo "----- Trivy image -----"
                 cat reports/trivy-image.txt || true
                 set +e
                 run_trivy \
-                    -v "$PWD:/src" \
-                    -v "$PWD/reports:/reports" \
-                    "$TRIVY_IMAGE" fs \
+                    -v /var/run/docker.sock:/var/run/docker.sock \
+                    "$TRIVY_IMAGE" image \
                     --scanners vuln,secret,misconfig \
                     --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 \
-                    --skip-dirs /src/.git \
-                    --format table --output /reports/trivy-fs.txt \
-                    /src
+                    --format table \
+                    "$CI_IMAGE" > reports/trivy-fs.txt 2>&1
                 fs_code=$?
                 set -e
                 echo "----- Trivy fs -----"
@@ -176,6 +196,7 @@ pipeline {
         always {
             sh '''
                 docker rm -f "samafile-pg-${BUILD_NUMBER}" >/dev/null 2>&1 || true
+                docker rm -f "samafile-tests-${BUILD_NUMBER}" "samafile-bandit-${BUILD_NUMBER}" "samafile-audit-${BUILD_NUMBER}" >/dev/null 2>&1 || true
                 docker network rm "samafile-ci-${BUILD_NUMBER}" >/dev/null 2>&1 || true
             '''
             junit allowEmptyResults: true, testResults: 'reports/pytest.xml'
