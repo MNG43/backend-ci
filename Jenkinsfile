@@ -124,33 +124,31 @@ pipeline {
                 sh '''
                 set -eu
                 run_trivy() {
-                    set +e
                     docker run --rm "$@"
-                    code=$?
-                    set -e
-                    return "$code"
                 }
-                set +e
-                run_trivy \
+                if run_trivy \
                     -v /var/run/docker.sock:/var/run/docker.sock \
                     "$TRIVY_IMAGE" image \
                     --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 \
                     --format table \
-                    "$LOCAL_IMAGE" > reports/trivy-image.txt 2>&1
-                image_code=$?
-                set -e
+                    "$LOCAL_IMAGE" > reports/trivy-image.txt 2>&1; then
+                    image_code=0
+                else
+                    image_code=$?
+                fi
                 echo "----- Trivy image -----"
                 cat reports/trivy-image.txt || true
-                set +e
-                run_trivy \
+                if run_trivy \
                     -v /var/run/docker.sock:/var/run/docker.sock \
                     "$TRIVY_IMAGE" image \
                     --scanners vuln,secret,misconfig \
                     --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 \
                     --format table \
-                    "$CI_IMAGE" > reports/trivy-fs.txt 2>&1
-                fs_code=$?
-                set -e
+                    "$CI_IMAGE" > reports/trivy-fs.txt 2>&1; then
+                    fs_code=0
+                else
+                    fs_code=$?
+                fi
                 echo "----- Trivy fs -----"
                 cat reports/trivy-fs.txt || true
                 test "$image_code" = 0
